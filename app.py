@@ -45,7 +45,7 @@ st.sidebar.header("Исходные данные")
 with st.sidebar:
     thickness=st.select_slider("Толщина листа, мм", options=[1+i*0.5 for i in range(11)], value=3.0)
     joint=st.selectbox("Тип соединения", ["Стыковое","Нахлёсточное"])
-    power=st.number_input("Средняя мощность, Вт", min_value=1.0, max_value=2000.0, value=1000.0, step=50.0)
+    power=st.number_input("Средняя мощность, Вт", min_value=1.0, max_value=1500.0, value=1000.0, step=50.0)
     speed=st.number_input("Скорость сварки, м/мин", min_value=0.001, value=0.6, step=0.05, format="%.3f")
     wire_speed=st.number_input("Подача проволоки, м/мин", min_value=0.001, value=1.2, step=0.1, format="%.3f")
     mg_base=st.number_input("Mg основного металла, мас. %", min_value=0.0, max_value=100.0, value=4.5, step=0.1)
@@ -86,6 +86,63 @@ m1,m2=st.columns(2)
 m1.metric("Mg после идеализированного смешения",f'{r["mg_mixed_wt_pct"]:.3f} мас. %')
 m2.metric("Mg после заданной сценарной потери",f'{r["mg_after_loss_wt_pct"]:.3f} мас. %')
 st.info("Доля присадки рассчитана только из введённых эффективных площадей. Коэффициент λ — учебное допущение, а не измеренный закон испарения Mg.")
+
+
+st.subheader("Подбор параметров по толщине")
+st.caption("Подбор выполняется по загруженным экспериментам для того же типа соединения и близкой толщины. Программа не выдумывает режимы, если измерений нет.")
+uploaded = st.file_uploader("Загрузить CSV с экспериментами", type=["csv"], key="recommendation_csv")
+if uploaded is None:
+    st.info("Чтобы получить численные рекомендации, загрузите CSV с реальными испытаниями. Подходящие строки должны содержать толщину, тип соединения, мощность, скорость сварки, подачу проволоки и метку дефекта.")
+else:
+    try:
+        exp = pd.read_csv(uploaded)
+        required = ["thickness_mm", "joint_type", "power_W", "weld_speed_m_min", "wire_speed_m_min", "defect_label"]
+        missing = [col for col in required if col not in exp.columns]
+        if missing:
+            st.error("В CSV отсутствуют обязательные столбцы: " + ", ".join(missing))
+        else:
+            exp["thickness_mm"] = pd.to_numeric(exp["thickness_mm"], errors="coerce")
+            for col in ["power_W", "weld_speed_m_min", "wire_speed_m_min", "wobble_mm", "frequency_Hz"]:
+                if col in exp.columns:
+                    exp[col] = pd.to_numeric(exp[col], errors="coerce")
+            def norm_joint(value):
+                z = str(value).strip().lower()
+                if z in ["butt", "стыковое", "стык"]: return "butt"
+                if z in ["lap", "нахлёсточное", "нахлесточное", "нахлёст", "нахлест"]: return "lap"
+                return z
+            wanted_joint = "butt" if joint == "Стыковое" else "lap"
+            exp["_joint"] = exp["joint_type"].map(norm_joint)
+            labels = exp["defect_label"].astype(str).str.strip().str.lower()
+            accepted = labels.isin(["no", "нет", "0", "false", "без дефектов", "годен", "принят", "accepted"])
+            good = exp[accepted & (exp["_joint"] == wanted_joint)].copy()
+            good = good.dropna(subset=["thickness_mm", "power_W", "weld_speed_m_min", "wire_speed_m_min"])
+            good["_thickness_delta"] = (good["thickness_mm"] - float(thickness)).abs()
+            near = good[good["_thickness_delta"] <= 0.500001].copy()
+            if near.empty:
+                st.warning("В загруженной базе нет принятых экспериментальных образцов для этого соединения в диапазоне толщины ±0,5 мм. Добавьте результаты испытаний — программа не будет подставлять неподтверждённые числа.")
+            else:
+                nearest_delta = near["_thickness_delta"].min()
+                nearest = near[near["_thickness_delta"] <= nearest_delta + 1e-9].copy()
+                # Если точной толщины нет, расширяем выборку только до ближайшей измеренной толщины.
+                st.write(f"Найдено принятых измерений: **{len(near)}** в диапазоне ±0,5 мм; ближайшая измеренная толщина: **{nearest['thickness_mm'].iloc[0]:g} мм**.")
+                st.caption("Числа ниже — статистика уже проведённых и помеченных как принятые опытов, а не универсальные безопасные настройки.")
+                fields = [("Мощность, Вт", "power_W"), ("Скорость сварки, м/мин", "weld_speed_m_min"), ("Подача проволоки, м/мин", "wire_speed_m_min"), ("Wobble, мм", "wobble_mm"), ("Частота Wobble, Гц", "frequency_Hz")]
+                out = []
+                for label, col in fields:
+                    if col in nearest.columns and nearest[col].notna().any():
+                        vals = nearest[col].dropna()
+                        out.append({"Параметр": label, "Медиана": round(float(vals.median()), 3), "Мин. в опытах": round(float(vals.min()), 3), "Макс. в опытах": round(float(vals.max()), 3)})
+                if out:
+                    st.dataframe(pd.DataFrame(out), hide_index=True, use_container_width=True)
+                if "shielding_gas" in nearest.columns:
+                    gases = nearest["shielding_gas"].dropna().astype(str).value_counts()
+                    if not gases.empty:
+                        st.write("Защитный газ в принятых опытах:", ", ".join(f"{name} ({count})" for name, count in gases.items()))
+                st.write("Ближайшие экспериментальные строки:")
+                show_cols = [c for c in ["experiment_id", "thickness_mm", "joint_type", "power_W", "weld_speed_m_min", "wire_speed_m_min", "wobble_mm", "frequency_Hz", "shielding_gas", "porosity_pct", "penetration_mm", "defect_label"] if c in nearest.columns]
+                st.dataframe(nearest[show_cols], hide_index=True, use_container_width=True)
+    except Exception as exc:
+        st.error(f"Не удалось прочитать CSV: {exc}")
 
 st.subheader("Карта режимов: мощность — скорость сварки")
 st.caption("Цвет показывает только расчётную погонную энергию. Это не карта риска и не граница бездефектных режимов.")
