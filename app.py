@@ -113,7 +113,7 @@ else:
             wanted_joint = "butt" if joint == "Стыковое" else "lap"
             exp["_joint"] = exp["joint_type"].map(norm_joint)
             labels = exp["defect_label"].astype(str).str.strip().str.lower()
-            accepted = labels.isin(["no", "нет", "0", "false", "без дефектов", "годен", "принят", "accepted"])
+            accepted = labels.isin(["no", "нет", "0", "0.0", "false", "без дефектов", "годен", "принят", "accepted"])
             good = exp[accepted & (exp["_joint"] == wanted_joint)].copy()
             good = good.dropna(subset=["thickness_mm", "power_W", "weld_speed_m_min", "wire_speed_m_min"])
             good["_thickness_delta"] = (good["thickness_mm"] - float(thickness)).abs()
