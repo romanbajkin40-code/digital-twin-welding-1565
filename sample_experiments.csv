@@ -1,0 +1,2 @@
+experiment_id,thickness_mm,joint_type,power_W,weld_speed_m_min,wire_speed_m_min,wire_diameter_mm,wobble_mm,frequency_Hz,shielding_gas,mg_base_wt_pct,mg_wire_wt_pct,penetration_mm,porosity_pct,mg_weld_wt_pct,defect_label,measurement_method,operator_id,notes
+EXP-001,3.0,butt,1000,0.6,1.2,1.0,2.0,100,Ar,4.5,5.0,,,,,,Синтетический пример; измерения не заданы
